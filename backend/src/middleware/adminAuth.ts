@@ -3,33 +3,18 @@ import { Request, Response, NextFunction } from 'express';
 import { env } from '../config/env';
 
 /**
- * Very simple v0 admin guard:
- * - Requires header: x-admin-secret
- * - Must match ADMIN_DEFAULT_PASSWORD from env
- *
- * This is intentionally minimal for early development and should
- * later be replaced with a proper auth system (JWT / sessions).
+ * Simple header-based admin auth.
+ * Clients must send:  x-admin-secret: <KILLSWITCH_API_KEY>
  */
-export function requireAdmin(
-  req: Request,
-  res: Response,
-  next: NextFunction
-) {
-  const provided = req.header('x-admin-secret');
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const header = req.header('x-admin-secret');
 
-  if (!provided) {
+  if (!header || header !== env.KILLSWITCH_API_KEY) {
     return res.status(401).json({
-      error: 'Missing admin secret',
+      error: 'Unauthorized – invalid admin secret',
     });
   }
 
-  if (provided !== env.ADMIN_DEFAULT_PASSWORD) {
-    return res.status(401).json({
-      error: 'Invalid admin secret',
-    });
-  }
-
-  // In the future we can attach an admin identity:
-  // (req as any).adminId = ...
-  next();
+  return next();
 }
+

@@ -10,70 +10,47 @@ datasource db {
 }
 
 /// Users in the system.
-///
-/// This includes:
-/// - Managed application users (the founder's customers)
-/// - Admin operators (founder / security staff) with isAdmin = true
+/// For KillSwitch, this represents the founder's customers / accounts being controlled.
 model User {
-  id           String          @id @default(cuid())
-  email        String          @unique
-  passwordHash String          // hashed credential (only used for admins)
-  isAdmin      Boolean         @default(false)
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  isAdmin      Boolean  @default(false)
 
-  // Access-state flags for managed users
-  hasAccess    Boolean         @default(true)   // "should this user have access in general?"
-  isFrozen     Boolean         @default(false)  // per-user kill switch
+  /// Access-state flags controlled by KillSwitch
+  hasAccess Boolean @default(true)  // "Should this user generally have access?"
+  isFrozen  Boolean @default(false) // Per-user kill switch
 
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  securityEvents      SecurityEvent[]
+  // Optional relations to security events
+  securityEvents      SecurityEvent[] @relation("SecurityEventTarget")
   actedSecurityEvents SecurityEvent[] @relation("SecurityEventActor")
 }
 
 /// Immutable log of all security-critical actions.
-///
-/// Application code should *only* insert into this table.
-/// No UPDATE or DELETE operations should be allowed at the app layer.
 model SecurityEvent {
-  id        String             @id @default(cuid())
+  id        String           @id @default(cuid())
   type      SecurityEventType
-
-  // Target user (for per-user actions); null for global events
-  userId    String?
-  user      User?              @relation(fields: [userId], references: [id])
-
-  // Actor admin who performed the action (null for automations)
-  actorId   String?
-  actor     User?              @relation("SecurityEventActor", fields: [actorId], references: [id])
-
   reason    String
-  metadata  Json?              // optional structured context (e.g., Stripe event ID)
+  metadata  Json?
+  createdAt DateTime         @default(now())
 
-  createdAt DateTime           @default(now())
+  // Optional: the user that was acted on (e.g. frozen)
+  user   User?  @relation("SecurityEventTarget", fields: [userId], references: [id])
+  userId String?
 
-  @@index([userId])
-  @@index([actorId])
-  @@index([type, createdAt])
+  // Optional: the actor who performed the action (future: real admins)
+  actor   User?  @relation("SecurityEventActor", fields: [actorId], references: [id])
+  actorId String?
 }
 
-/// System-wide state (intended as a singleton row with id = 1).
-///
-/// Holds the global lock flag.
+/// Singleton system state row controlling the global kill switch.
 model SystemState {
   id            Int      @id
   globalLock    Boolean  @default(false)
   lastChangedAt DateTime @default(now())
-}
-
-/// Track Stripe-related events if you want deeper reconciliation later.
-/// Not required for core MVP, but useful for debugging/future features.
-model StripeEventLog {
-  id            String   @id @default(cuid())
-  stripeEventId String   @unique
-  type          String
-  payload       Json
-  createdAt     DateTime @default(now())
 }
 
 enum SecurityEventType {
@@ -82,5 +59,6 @@ enum SecurityEventType {
   USER_FROZEN
   USER_UNFROZEN
   AUTO_FRAUD_LOCK
-  AUTO_FRAUD_UNLOCK
+  ACCESS_DENIED
 }
+

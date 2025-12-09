@@ -1,7 +1,8 @@
 // backend/src/app.ts
 import express, { json } from 'express';
-import { env } from './config/env';
+
 import { securityRouter } from './modules/security/security.routes';
+import { enforcementRouter } from './modules/enforcement/enforcement.routes';
 
 export function createApp() {
   const app = express();
@@ -9,14 +10,17 @@ export function createApp() {
   app.use(json());
 
   // Basic health check
-  app.get('/health', (_req, res) => {
+  app.get('/', (_req, res) => {
     res.json({ status: 'ok' });
   });
 
-  // Security / Kill Switch API
+  // Security / Kill Switch controls
   app.use('/api/security', securityRouter);
 
-  // Simple 404 handler
+  // Enforcement engine (THIS IS THE PRODUCT)
+  app.use('/api/enforcement', enforcementRouter);
+
+  // 404
   app.use((req, res) => {
     res.status(404).json({
       error: 'Not found',
@@ -26,4 +30,6 @@ export function createApp() {
 
   return app;
 }
+
+
 

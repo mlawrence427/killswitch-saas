@@ -1,13 +1,12 @@
 // backend/src/config/database.ts
 import { PrismaClient } from '@prisma/client';
-import { isProd } from './env';
 
-const globalForPrisma = global as unknown as { prisma?: PrismaClient };
+export const prisma = new PrismaClient({
+  log: ['error', 'warn'],
+});
 
-export const prisma: PrismaClient =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: isProd ? ['error'] : ['query', 'error', 'warn'],
-  });
+// Optional helper if you ever want to explicitly connect on startup
+export async function connectDatabase() {
+  await prisma.$connect();
+}
 
-if (!isProd) globalForPrisma.prisma = prisma;

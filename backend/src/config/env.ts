@@ -1,36 +1,44 @@
 // backend/src/config/env.ts
-import path from 'path';
-import dotenv from 'dotenv';
-import { z } from 'zod';
+import 'dotenv/config';
 
-// Explicitly load backend/.env regardless of where Node is started from
-const envPath = path.resolve(__dirname, '../../.env');
-dotenv.config({ path: envPath });
-
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.string().transform((val) => parseInt(val, 10)).default('4000'),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
-  ADMIN_DEFAULT_EMAIL: z.string().email('ADMIN_DEFAULT_EMAIL must be a valid email'),
-  ADMIN_DEFAULT_PASSWORD: z
-    .string()
-    .min(12, 'ADMIN_DEFAULT_PASSWORD should be at least 12 characters'),
-  STRIPE_WEBHOOK_SECRET: z.string().optional(),
-});
-
-const parsed = envSchema.safeParse(process.env);
-
-if (!parsed.success) {
-  console.error('Invalid environment variables:', parsed.error.format());
-  console.error('Loaded env from:', envPath);
-  process.exit(1);
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`Missing required env var: ${key}`);
+  }
+  return value;
 }
 
-export const env = parsed.data;
-export type Env = typeof env;
+function getEnv(key: string, fallback?: string): string | undefined {
+  const value = process.env[key];
+  if (value === undefined || value === '') {
+    return fallback;
+  }
+  return value;
+}
 
-export const isProd = env.NODE_ENV === 'production';
-export const isDev = env.NODE_ENV === 'development';
-export const isTest = env.NODE_ENV === 'test';
+export const env = {
+  NODE_ENV: getEnv('NODE_ENV', 'development')!,
+  PORT: Number(getEnv('PORT', '4000')),
+
+  // Database
+  DATABASE_URL: requireEnv('DATABASE_URL'),
+
+  // Security / Auth
+  JWT_SECRET: requireEnv('JWT_SECRET'),
+
+  // Admin bootstrap (used only on first boot if no admin exists)
+  ADMIN_DEFAULT_EMAIL: requireEnv('ADMIN_DEFAULT_EMAIL'),
+  ADMIN_DEFAULT_PASSWORD: requireEnv('ADMIN_DEFAULT_PASSWORD'),
+
+  // KillSwitch enforcement (optional for now, but we read it)
+  KILLSWITCH_API_KEY: getEnv('KILLSWITCH_API_KEY', 'dev_killswitch_key_123'),
+
+  // Stripe (future, optional)
+  STRIPE_WEBHOOK_SECRET: getEnv('STRIPE_WEBHOOK_SECRET'),
+  STRIPE_API_KEY: getEnv('STRIPE_API_KEY'),
+};
+
+
+
 

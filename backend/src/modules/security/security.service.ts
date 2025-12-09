@@ -1,13 +1,14 @@
 // backend/src/modules/security/security.service.ts
 import { prisma } from '../../config/database';
-import { SecurityEventType, SystemState, User, SecurityEvent } from '@prisma/client';
+import { env } from '../../config/env';
+import type { SystemState, User, SecurityEvent } from '@prisma/client';
 
 /**
  * Ensure the SystemState singleton row exists.
  * We always use id = 1 for the global system state.
  */
 export async function ensureSystemState(): Promise<SystemState> {
-  return prisma.systemState.upsert({
+  const system = await prisma.systemState.upsert({
     where: { id: 1 },
     update: {},
     create: {
@@ -15,6 +16,8 @@ export async function ensureSystemState(): Promise<SystemState> {
       globalLock: false,
     },
   });
+
+  return system;
 }
 
 /**
@@ -27,72 +30,66 @@ export async function getSystemState(): Promise<SystemState> {
 interface SetGlobalLockParams {
   enabled: boolean;
   reason: string;
-  actorLabel?: string; // e.g. "admin-api-key" or future admin id/email
+  actorLabel?: string; // optional human label for who did this
 }
 
 /**
- * Toggle the global lock flag and log a security event.
+ * Turn the global KillSwitch ON or OFF and log a security event.
  */
 export async function setGlobalLock(
   params: SetGlobalLockParams
 ): Promise<SystemState> {
   const { enabled, reason, actorLabel } = params;
+  const now = new Date();
 
-  // Ensure singleton exists before update
-  await ensureSystemState();
-
-  const updated = await prisma.systemState.update({
+  const system = await prisma.systemState.update({
     where: { id: 1 },
     data: {
       globalLock: enabled,
-      lastChangedAt: new Date(),
+      lastChangedAt: now,
     },
   });
 
   await prisma.securityEvent.create({
     data: {
-      type: enabled
-        ? SecurityEventType.GLOBAL_LOCK_ON
-        : SecurityEventType.GLOBAL_LOCK_OFF,
+      type: 'GLOBAL_LOCK_CHANGED',
       reason,
-      metadata: actorLabel ? { actorLabel } : undefined,
+      userId: actorLabel, // storing the label in userId for now
+      metadata: {
+        enabled,
+        actorLabel,
+      },
     },
   });
 
-  return updated;
+  return system;
 }
 
 interface FreezeUserParams {
   userId: string;
   reason: string;
   actorLabel?: string;
-  isAuto?: boolean; // true if triggered by Stripe / automation
+  isAuto: boolean;
 }
 
-/**
- * Freeze a single user (per-user kill switch).
- */
-export async function freezeUser(
-  params: FreezeUserParams
-): Promise<User> {
+export async function freezeUser(params: FreezeUserParams): Promise<User> {
   const { userId, reason, actorLabel, isAuto } = params;
 
   const user = await prisma.user.update({
     where: { id: userId },
     data: {
       isFrozen: true,
-      hasAccess: false,
     },
   });
 
   await prisma.securityEvent.create({
     data: {
-      type: isAuto
-        ? SecurityEventType.AUTO_FRAUD_LOCK
-        : SecurityEventType.USER_FROZEN,
+      type: isAuto ? 'AUTO_FREEZE' : 'MANUAL_FREEZE',
       userId: user.id,
       reason,
-      metadata: actorLabel ? { actorLabel } : undefined,
+      metadata: {
+        actorLabel,
+      },
     },
   });
 
@@ -103,35 +100,27 @@ interface UnfreezeUserParams {
   userId: string;
   reason: string;
   actorLabel?: string;
-  isAuto?: boolean;
+  isAuto: boolean;
 }
 
-/**
- * Unfreeze a user (restore access subject to your app logic).
- */
-export async function unfreezeUser(
-  params: UnfreezeUserParams
-): Promise<User> {
+export async function unfreezeUser(params: UnfreezeUserParams): Promise<User> {
   const { userId, reason, actorLabel, isAuto } = params;
 
   const user = await prisma.user.update({
     where: { id: userId },
     data: {
       isFrozen: false,
-      // We DO NOT automatically set hasAccess=true here -
-      // that should follow your business rules. For now
-      // we leave it as whatever it already was.
     },
   });
 
   await prisma.securityEvent.create({
     data: {
-      type: isAuto
-        ? SecurityEventType.AUTO_FRAUD_UNLOCK
-        : SecurityEventType.USER_UNFROZEN,
+      type: isAuto ? 'AUTO_UNFREEZE' : 'MANUAL_UNFREEZE',
       userId: user.id,
       reason,
-      metadata: actorLabel ? { actorLabel } : undefined,
+      metadata: {
+        actorLabel,
+      },
     },
   });
 
@@ -139,9 +128,11 @@ export async function unfreezeUser(
 }
 
 /**
- * List recent security events for the log view.
+ * List recent security events (for logs endpoint).
  */
-export async function listSecurityEvents(limit = 100): Promise<SecurityEvent[]> {
+export async function listSecurityEvents(
+  limit = 100
+): Promise<SecurityEvent[]> {
   return prisma.securityEvent.findMany({
     orderBy: { createdAt: 'desc' },
     take: limit,
@@ -149,9 +140,45 @@ export async function listSecurityEvents(limit = 100): Promise<SecurityEvent[]> 
 }
 
 /**
- * Called on server startup to ensure critical security state exists.
+ * One-time bootstrap on server start:
+ * - ensure SystemState exists
+ * - ensure a default admin exists (by email)
  */
 export async function bootstrapSecurityLayer(): Promise<void> {
   await ensureSystemState();
-  // In the future, you can also seed an initial admin here.
+
+  const existingAdmin = await prisma.user.findFirst({
+    where: { isAdmin: true },
+  });
+
+  if (!existingAdmin) {
+    const admin = await prisma.user.create({
+      data: {
+        email: env.ADMIN_DEFAULT_EMAIL,
+        passwordHash: env.ADMIN_DEFAULT_PASSWORD, // in a real app, hash this!
+        isAdmin: true,
+        hasAccess: true,
+      },
+    });
+
+    await prisma.securityEvent.create({
+      data: {
+        type: 'ADMIN_BOOTSTRAP',
+        userId: admin.id,
+        reason: 'Default admin created on first boot',
+        metadata: {
+          email: env.ADMIN_DEFAULT_EMAIL,
+        },
+      },
+    });
+
+    console.log(
+      `[KillSwitch] Default admin created: ${env.ADMIN_DEFAULT_EMAIL} / ${env.ADMIN_DEFAULT_PASSWORD}`
+    );
+  }
+
+  console.log('[KillSwitch] Security layer bootstrapped');
 }
+
+
+
