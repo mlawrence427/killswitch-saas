@@ -6,32 +6,34 @@ import { SecurityEventType } from '@prisma/client';
 
 /**
  * Ensure the SystemState singleton row exists.
- * We always use id = 1 for the global system state.
+ * Always uses id = 1.
  */
 export async function ensureSystemState(): Promise<SystemState> {
   const system = await prisma.systemState.upsert({
     where: { id: 1 },
     update: {},
     create: {
-  id: 1,
-  globalLock: false,
-   },
+      id: 1,
+      globalLock: false, // ✅ CORRECT FIELD NAME
+    },
   });
 
   return system;
 }
 
 /**
- * Read the current system state (after ensuring it exists).
+ * Read current global system state.
  */
 export async function getSystemState(): Promise<SystemState> {
   return ensureSystemState();
 }
 
+// ---------------- GLOBAL LOCK ----------------
+
 interface SetGlobalLockParams {
   enabled: boolean;
   reason: string;
-  actorLabel?: string; // optional human label for who did this
+  actorLabel?: string;
 }
 
 /**
@@ -43,28 +45,29 @@ export async function setGlobalLock(
   const { enabled, reason, actorLabel } = params;
   const now = new Date();
 
+  // 1) Update System State
   const system = await prisma.systemState.update({
     where: { id: 1 },
     data: {
-      // NOTE: field name matches Prisma model: "globalLock"
-      globalLock: enabled,
+      globalLock: enabled,     // ✅ CORRECT FIELD
       lastChangedAt: now,
     },
   });
 
-  // Pick the correct enum based on the new state
+  // 2) Select correct enum
   const eventType = enabled
     ? SecurityEventType.GLOBAL_LOCK_ENABLED
     : SecurityEventType.GLOBAL_LOCK_DISABLED;
 
+  // 3) Immutable audit log
   await prisma.securityEvent.create({
     data: {
-      type: eventType,
+      type: eventType,        // ✅ REQUIRED ENUM FIELD
       reason,
-      userId: null, // system-level action
+      userId: null,
       metadata: {
         enabled,
-        actorLabel,
+        actorLabel: actorLabel ?? 'admin-api-secret',
       },
     },
   });
@@ -72,7 +75,7 @@ export async function setGlobalLock(
   return system;
 }
 
-// --- per-user freeze / unfreeze ---
+// ---------------- USER FREEZE ----------------
 
 interface UserFreezeParams {
   userId: string;
@@ -85,9 +88,7 @@ export async function freezeUser(params: UserFreezeParams): Promise<User> {
 
   const user = await prisma.user.update({
     where: { id: userId },
-    data: {
-      isFrozen: true,
-    },
+    data: { isFrozen: true },
   });
 
   await prisma.securityEvent.create({
@@ -107,9 +108,7 @@ export async function unfreezeUser(params: UserFreezeParams): Promise<User> {
 
   const user = await prisma.user.update({
     where: { id: userId },
-    data: {
-      isFrozen: false,
-    },
+    data: { isFrozen: false },
   });
 
   await prisma.securityEvent.create({
@@ -125,16 +124,17 @@ export async function unfreezeUser(params: UserFreezeParams): Promise<User> {
 }
 
 /**
- * Bootstrap helper called on server startup.
- * Ensures the core security layer is ready.
+ * Startup bootstrap
  */
 export async function bootstrapSecurityLayer(): Promise<void> {
-  // for now, just ensure the singleton row exists
   await ensureSystemState();
-
-  // later we could pre-create a default admin, etc.
   console.log('[KillSwitch] Security layer bootstrapped');
 }
+
+
+
+
+
 
 
 
