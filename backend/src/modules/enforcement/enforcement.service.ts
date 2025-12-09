@@ -17,81 +17,43 @@ export interface AccessDecision {
   effectiveAt: string;
 }
 
-async function logAccessDenied(opts: {
-  userId?: string;
-  reason: AccessDeniedReason;
-  context?: Record<string, unknown>;
-}) {
-  const { userId, reason, context } = opts;
-
-  await prisma.securityEvent.create({
-    data: {
-      type: SecurityEventType.ACCESS_DENIED,
-      userId,
-      reason,
-      metadata: context ?? undefined,
-    },
-  });
+/**
+ * A compact snapshot that client SDKs can poll and cache locally.
+ */
+export interface EnforcementSnapshot {
+  globalLock: boolean;
+  frozenUserIds: string[];
+  generatedAt: string; // ISO timestamp
 }
 
-export async function checkAccess(userId: string): Promise<AccessDecision> {
-  const now = new Date().toISOString();
+// ... your existing logAccessDenied + checkAccess(...) here ...
 
-  const system = await getSystemState();
-  if (system.globalLock) {
-    await logAccessDenied({
-      userId,
-      reason: 'GLOBAL_LOCK',
-      context: { globalLock: true },
-    });
-
-    return {
-      status: 'denied',
-      reason: 'GLOBAL_LOCK',
-      effectiveAt: now,
-    };
-  }
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-  });
-
-  if (!user) {
-    await logAccessDenied({ userId, reason: 'USER_NOT_FOUND' });
-
-    return {
-      status: 'denied',
-      reason: 'USER_NOT_FOUND',
-      effectiveAt: now,
-    };
-  }
-
-  if (user.isFrozen) {
-    await logAccessDenied({ userId, reason: 'USER_FROZEN' });
-
-    return {
-      status: 'denied',
-      reason: 'USER_FROZEN',
-      effectiveAt: now,
-    };
-  }
-
-  if (!user.hasAccess) {
-    await logAccessDenied({ userId, reason: 'NO_ACCESS_FLAG' });
-
-    return {
-      status: 'denied',
-      reason: 'NO_ACCESS_FLAG',
-      effectiveAt: now,
-    };
-  }
+/**
+ * Snapshot of current enforcement state.
+ * Client SDKs can poll this and make 100% local decisions.
+ */
+export async function getEnforcementSnapshot(): Promise<EnforcementSnapshot> {
+  const [system, frozenUsers] = await Promise.all([
+    getSystemState(),
+    prisma.user.findMany({
+      where: {
+        OR: [
+          { isFrozen: true },
+          { hasAccess: false },
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
 
   return {
-    status: 'allowed',
-    reason: 'OK',
-    effectiveAt: now,
+    globalLock: system.globalLock,
+    frozenUserIds: frozenUsers.map((u) => u.id),
+    generatedAt: new Date().toISOString(),
   };
 }
+
+
 
 
 

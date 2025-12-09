@@ -18,15 +18,11 @@ model User {
   isAdmin      Boolean  @default(false)
 
   /// Access-state flags controlled by KillSwitch
-  hasAccess Boolean @default(true)  // "Should this user generally have access?"
-  isFrozen  Boolean @default(false) // Per-user kill switch
+  hasAccess Boolean @default(true)   // "Should this user generally have access?"
+  isFrozen  Boolean @default(false)  // Per-user kill switch
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // Optional relations to security events
-  securityEvents      SecurityEvent[] @relation("SecurityEventTarget")
-  actedSecurityEvents SecurityEvent[] @relation("SecurityEventActor")
 }
 
 /// Immutable log of all security-critical actions.
@@ -34,9 +30,9 @@ model SecurityEvent {
   id        String           @id @default(cuid())
   createdAt DateTime         @default(now())
   type      SecurityEventType
-  userId    String?
-  reason    String?
-  metadata  Json?
+  userId    String?          // optional: which user this event is about
+  reason    String?          // human-readable reason
+  metadata  Json?            // extra context (globalLock flag, actor label, etc.)
 }
 
 /// Singleton system state row controlling the global kill switch.
@@ -52,5 +48,6 @@ enum SecurityEventType {
   USER_FROZEN
   USER_UNFROZEN
 }
+
 
 
