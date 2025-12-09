@@ -1,8 +1,8 @@
 // backend/src/modules/security/security.service.ts
+
 import { prisma } from '../../config/database';
 import type { SystemState, User } from '@prisma/client';
 import { SecurityEventType } from '@prisma/client';
-import { env } from '../../config/env';
 
 /**
  * Ensure the SystemState singleton row exists.
@@ -13,9 +13,9 @@ export async function ensureSystemState(): Promise<SystemState> {
     where: { id: 1 },
     update: {},
     create: {
-      id: 1,
-      globalLock: false,
-    },
+  id: 1,
+  globalLock: false,
+   },
   });
 
   return system;
@@ -46,16 +46,22 @@ export async function setGlobalLock(
   const system = await prisma.systemState.update({
     where: { id: 1 },
     data: {
+      // NOTE: field name matches Prisma model: "globalLock"
       globalLock: enabled,
       lastChangedAt: now,
     },
   });
 
+  // Pick the correct enum based on the new state
+  const eventType = enabled
+    ? SecurityEventType.GLOBAL_LOCK_ENABLED
+    : SecurityEventType.GLOBAL_LOCK_DISABLED;
+
   await prisma.securityEvent.create({
     data: {
-      type: SecurityEventType.GLOBAL_LOCK_CHANGED,
+      type: eventType,
       reason,
-      userId: undefined,
+      userId: null, // system-level action
       metadata: {
         enabled,
         actorLabel,
@@ -129,6 +135,8 @@ export async function bootstrapSecurityLayer(): Promise<void> {
   // later we could pre-create a default admin, etc.
   console.log('[KillSwitch] Security layer bootstrapped');
 }
+
+
 
 
 
