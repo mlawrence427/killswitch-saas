@@ -32,18 +32,11 @@ model User {
 /// Immutable log of all security-critical actions.
 model SecurityEvent {
   id        String           @id @default(cuid())
-  type      SecurityEventType
-  reason    String
-  metadata  Json?
   createdAt DateTime         @default(now())
-
-  // Optional: the user that was acted on (e.g. frozen)
-  user   User?  @relation("SecurityEventTarget", fields: [userId], references: [id])
-  userId String?
-
-  // Optional: the actor who performed the action (future: real admins)
-  actor   User?  @relation("SecurityEventActor", fields: [actorId], references: [id])
-  actorId String?
+  type      SecurityEventType
+  userId    String?
+  reason    String?
+  metadata  Json?
 }
 
 /// Singleton system state row controlling the global kill switch.
@@ -54,11 +47,10 @@ model SystemState {
 }
 
 enum SecurityEventType {
-  GLOBAL_LOCK_ON
-  GLOBAL_LOCK_OFF
+  ACCESS_DENIED
+  GLOBAL_LOCK_CHANGED
   USER_FROZEN
   USER_UNFROZEN
-  AUTO_FRAUD_LOCK
-  ACCESS_DENIED
 }
+
 

@@ -1,73 +1,42 @@
 // backend/src/modules/enforcement/enforcement.service.ts
 import { prisma } from '../../config/database';
-import { SecurityEventType, User } from '@prisma/client';
+import { SecurityEventType } from '@prisma/client';
 import { getSystemState } from '../security/security.service';
 
-/**
- * Result status for an access decision.
- */
 export type AccessStatus = 'allowed' | 'denied';
 
-/**
- * Reasons why access was denied.
- */
 export type AccessDeniedReason =
   | 'GLOBAL_LOCK'
   | 'USER_NOT_FOUND'
   | 'USER_FROZEN'
   | 'NO_ACCESS_FLAG';
 
-/**
- * Shape of the decision returned to calling apps.
- */
 export interface AccessDecision {
   status: AccessStatus;
   reason: AccessDeniedReason | 'OK';
-  effectiveAt: string; // ISO timestamp
+  effectiveAt: string;
 }
 
-/**
- * Internal helper to log ACCESS_DENIED events for observability / forensics.
- */
 async function logAccessDenied(opts: {
   userId?: string;
   reason: AccessDeniedReason;
   context?: Record<string, unknown>;
-}): Promise<void> {
+}) {
   const { userId, reason, context } = opts;
 
   await prisma.securityEvent.create({
     data: {
+      type: SecurityEventType.ACCESS_DENIED,
       userId,
       reason,
-      type: SecurityEventType.ACCESS_DENIED,
       metadata: context ?? undefined,
     },
   });
 }
 
-/**
- * Helper to build the common denied response.
- */
-function denied(
-  reason: AccessDeniedReason,
-  effectiveAt: string
-): AccessDecision {
-  return {
-    status: 'denied',
-    reason,
-    effectiveAt,
-  };
-}
-
-/**
- * Core KillSwitch enforcement check.
- * This is what external SaaS apps will call.
- */
 export async function checkAccess(userId: string): Promise<AccessDecision> {
-  const effectiveAt = new Date().toISOString();
+  const now = new Date().toISOString();
 
-  // 1. Global lock — if flipped, nobody gets through.
   const system = await getSystemState();
   if (system.globalLock) {
     await logAccessDenied({
@@ -76,49 +45,53 @@ export async function checkAccess(userId: string): Promise<AccessDecision> {
       context: { globalLock: true },
     });
 
-    return denied('GLOBAL_LOCK', effectiveAt);
+    return {
+      status: 'denied',
+      reason: 'GLOBAL_LOCK',
+      effectiveAt: now,
+    };
   }
 
-  // 2. Look up the user being checked.
-  const user: User | null = await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: userId },
   });
 
   if (!user) {
-    await logAccessDenied({
-      userId,
+    await logAccessDenied({ userId, reason: 'USER_NOT_FOUND' });
+
+    return {
+      status: 'denied',
       reason: 'USER_NOT_FOUND',
-    });
-
-    return denied('USER_NOT_FOUND', effectiveAt);
+      effectiveAt: now,
+    };
   }
 
-  // 3. Explicit freeze flag.
   if (user.isFrozen) {
-    await logAccessDenied({
-      userId: user.id,
+    await logAccessDenied({ userId, reason: 'USER_FROZEN' });
+
+    return {
+      status: 'denied',
       reason: 'USER_FROZEN',
-    });
-
-    return denied('USER_FROZEN', effectiveAt);
+      effectiveAt: now,
+    };
   }
 
-  // 4. Generic "no access" flag controlled by the founder's system.
   if (!user.hasAccess) {
-    await logAccessDenied({
-      userId: user.id,
-      reason: 'NO_ACCESS_FLAG',
-    });
+    await logAccessDenied({ userId, reason: 'NO_ACCESS_FLAG' });
 
-    return denied('NO_ACCESS_FLAG', effectiveAt);
+    return {
+      status: 'denied',
+      reason: 'NO_ACCESS_FLAG',
+      effectiveAt: now,
+    };
   }
 
-  // 5. Everything is good.
   return {
     status: 'allowed',
     reason: 'OK',
-    effectiveAt,
+    effectiveAt: now,
   };
 }
+
 
 

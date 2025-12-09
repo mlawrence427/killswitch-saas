@@ -11,7 +11,7 @@ async function main() {
   const port = env.PORT || 4000;
 
   app.listen(port, () => {
-    console.log(`🛡 KillSwitch SaaS backend listening at http://localhost:${port}`);
+    console.log(`♡ KillSwitch SaaS backend listening at http://localhost:${port}`);
   });
 }
 
@@ -19,6 +19,7 @@ main().catch((err) => {
   console.error('Fatal error during startup', err);
   process.exit(1);
 });
+
 
 
 
