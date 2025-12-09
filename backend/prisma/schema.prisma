@@ -1,0 +1,86 @@
+// backend/prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Users in the system.
+///
+/// This includes:
+/// - Managed application users (the founder's customers)
+/// - Admin operators (founder / security staff) with isAdmin = true
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  passwordHash String          // hashed credential (only used for admins)
+  isAdmin      Boolean         @default(false)
+
+  // Access-state flags for managed users
+  hasAccess    Boolean         @default(true)   // "should this user have access in general?"
+  isFrozen     Boolean         @default(false)  // per-user kill switch
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  securityEvents      SecurityEvent[]
+  actedSecurityEvents SecurityEvent[] @relation("SecurityEventActor")
+}
+
+/// Immutable log of all security-critical actions.
+///
+/// Application code should *only* insert into this table.
+/// No UPDATE or DELETE operations should be allowed at the app layer.
+model SecurityEvent {
+  id        String             @id @default(cuid())
+  type      SecurityEventType
+
+  // Target user (for per-user actions); null for global events
+  userId    String?
+  user      User?              @relation(fields: [userId], references: [id])
+
+  // Actor admin who performed the action (null for automations)
+  actorId   String?
+  actor     User?              @relation("SecurityEventActor", fields: [actorId], references: [id])
+
+  reason    String
+  metadata  Json?              // optional structured context (e.g., Stripe event ID)
+
+  createdAt DateTime           @default(now())
+
+  @@index([userId])
+  @@index([actorId])
+  @@index([type, createdAt])
+}
+
+/// System-wide state (intended as a singleton row with id = 1).
+///
+/// Holds the global lock flag.
+model SystemState {
+  id            Int      @id
+  globalLock    Boolean  @default(false)
+  lastChangedAt DateTime @default(now())
+}
+
+/// Track Stripe-related events if you want deeper reconciliation later.
+/// Not required for core MVP, but useful for debugging/future features.
+model StripeEventLog {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique
+  type          String
+  payload       Json
+  createdAt     DateTime @default(now())
+}
+
+enum SecurityEventType {
+  GLOBAL_LOCK_ON
+  GLOBAL_LOCK_OFF
+  USER_FROZEN
+  USER_UNFROZEN
+  AUTO_FRAUD_LOCK
+  AUTO_FRAUD_UNLOCK
+}
